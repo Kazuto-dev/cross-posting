@@ -3,8 +3,7 @@ import axios from 'axios';
 
 function CreatePost() {
   const [content, setContent] = useState('');
-  const [accessToken, setAccessToken] = useState('');
-  const [authorId, setAuthorId] = useState('');
+
 
   const handlePost = async (e) => {
     e.preventDefault();
@@ -26,19 +25,6 @@ function CreatePost() {
     <div>
       <h2>Create Post</h2>
       <textarea value={content} onChange={(e) => setContent(e.target.value)} />
-      <br />
-      <input
-        placeholder="Access Token"
-        value={accessToken}
-        onChange={(e) => setAccessToken(e.target.value)}
-      />
-      <br />
-      <input
-        placeholder="Author ID"
-        value={authorId}
-        onChange={(e) => setAuthorId(e.target.value)}
-      />
-      <br />
       <button onClick={handlePost}>Post to LinkedIn</button>
     </div>
   );
