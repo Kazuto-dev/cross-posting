@@ -1,12 +1,19 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
+require('dotenv').config();
 
 router.post('/create', async (req, res) => {
-  const { content, accessToken, authorId } = req.body;
+  const { content } = req.body;
+  const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
+  const authorId = process.env.LINKEDIN_AUTHOR_ID;
+
+  if (!content || !accessToken || !authorId) {
+    return res.status(400).json({ error: 'Missing post content or LinkedIn credentials' });
+  }
 
   try {
-    const result = await axios.post(
+    const response = await axios.post(
       'https://api.linkedin.com/rest/posts',
       {
         author: `urn:li:person:${authorId}`,
@@ -29,11 +36,20 @@ router.post('/create', async (req, res) => {
       }
     );
 
-    res.json({ message: 'Posted to LinkedIn', data: result.data });
+    res.status(200).json({
+      message: '✅ LinkedIn post successful!',
+      postId: response.data,
+    });
   } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to post to LinkedIn' });
+    console.error('❌ LinkedIn API error (full):');
+    console.error('Status:', error.response?.status || 'unknown');
+    console.error('Data:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to post to LinkedIn',
+      details: error.response?.data || error.message,
+    });
   }
 });
 
 module.exports = router;
+// This code defines a route for creating posts on LinkedIn using the LinkedIn API.

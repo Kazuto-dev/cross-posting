@@ -4,27 +4,30 @@ import axios from 'axios';
 function CreatePost() {
   const [content, setContent] = useState('');
 
-
   const handlePost = async (e) => {
     e.preventDefault();
 
     try {
-      await axios.post('http://localhost:5000/api/posts/create', {
+      const res = await axios.post('http://localhost:5000/api/posts/create', {
         content,
-        accessToken,
-        authorId,
       });
-      alert('Posted to LinkedIn!');
+      alert(res.data.message);
     } catch (err) {
       console.error(err);
-      alert('Failed to post');
+      alert('❌ Failed to post to LinkedIn');
     }
   };
 
   return (
     <div>
       <h2>Create Post</h2>
-      <textarea value={content} onChange={(e) => setContent(e.target.value)} />
+      <textarea
+        rows={6}
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="Type your LinkedIn post here..."
+      />
+      <br />
       <button onClick={handlePost}>Post to LinkedIn</button>
     </div>
   );
