@@ -2,12 +2,11 @@ import CreatePost from './createposts';
 
 function App() {
   return (
-    <div>
+    <div style={{ padding: '24px' }}>
       <h1>LinkedIn Crossposter</h1>
-<a href="http://localhost:5000/api/linkedin/login" target="_blank" rel="noopener noreferrer">
-  Login with LinkedIn
-</a>
-
+      <a href="http://localhost:5000/api/linkedin/login" target="_blank" rel="noopener noreferrer">
+        Login with LinkedIn
+      </a>
       <CreatePost />
     </div>
   );
