@@ -4,7 +4,7 @@ const router = express.Router();
 const Post = require('../models/post');
 require('dotenv').config();
 
-// Interceptor for debugging all LinkedIn responses
+// Axios interceptor for logging LinkedIn API traffic
 axios.interceptors.response.use(
   (res) => {
     console.log('📦 LinkedIn Response:', {
@@ -26,7 +26,17 @@ axios.interceptors.response.use(
   }
 );
 
-// ✅ Create a LinkedIn post and save to MongoDB
+// GET all posts
+router.get('/', async (req, res) => {
+  try {
+    const posts = await Post.find().sort({ createdAt: -1 });
+    res.status(200).json(posts);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch posts', details: err.message });
+  }
+});
+
+// CREATE a LinkedIn post
 router.post('/create', async (req, res) => {
   const { content } = req.body;
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
@@ -37,17 +47,14 @@ router.post('/create', async (req, res) => {
   }
 
   try {
-    const response = await axios.post(
+    // 1. Create the post on LinkedIn
+    const createRes = await axios.post(
       'https://api.linkedin.com/rest/posts',
       {
         author: `urn:li:person:${authorId}`,
         commentary: content,
         visibility: 'PUBLIC',
-        distribution: {
-          feedDistribution: 'MAIN_FEED',
-          targetEntities: [],
-          thirdPartyDistributionChannels: [],
-        },
+        distribution: { feedDistribution: 'MAIN_FEED' },
         lifecycleState: 'PUBLISHED',
         isReshareDisabledByAuthor: false,
       },
@@ -57,110 +64,95 @@ router.post('/create', async (req, res) => {
           'LinkedIn-Version': '202306',
           'Content-Type': 'application/json',
         },
+        validateStatus: () => true,
       }
     );
 
-    // Log full response to understand structure (remove in prod)
-    console.dir(response.data, { depth: null });
-
-    // Attempt to extract URN, but do not fail if not present
-    let urn = response.data?.id;
-
-    if (!urn) {
-      console.warn('⚠️ LinkedIn post created but no URN returned. Response:', response.data);
-      urn = null; // Optional: or use `urn:li:share:UNKNOWN`
+    if (createRes.status >= 300) {
+      return res.status(createRes.status).json({
+        error: 'LinkedIn post creation failed',
+        details: createRes.data,
+      });
     }
 
-    // ✅ Save to DB even if URN is null
-    const savedPost = await Post.create({ content, postId: urn });
+    // 2. Extract share URN from response header
+    const locationHeader = createRes.headers?.location;
+    const shareUrn = locationHeader?.includes('urn%3Ali%3Ashare%3A')
+      ? decodeURIComponent(locationHeader.split('/').pop())
+      : null;
+
+    if (!shareUrn) {
+      return res.status(500).json({ error: 'Post created but share URN not found' });
+    }
+
+    // 3. Convert share URN to activity URN (inferred)
+    const activityUrn = shareUrn.replace('share', 'activity');
+
+    // 4. Save post data to MongoDB
+    const savedPost = await Post.create({
+      content,
+      postId: shareUrn,
+      activityUrn,
+    });
 
     res.status(200).json({
-      message: '✅ LinkedIn post successful!',
+      message: '✅ LinkedIn post created and saved!',
       savedPost,
     });
 
   } catch (error) {
     const status = error.response?.status || 500;
     const details = error.response?.data || error.message;
-
-    if (status === 422 && details?.message?.includes('duplicate')) {
-      return res.status(422).json({
-        error: '❌ Duplicate content: LinkedIn already has this post.',
-        duplicateOf: details.message,
-      });
-    }
-
-    res.status(status).json({
-      error: '❌ Failed to post to LinkedIn',
-      details,
-    });
+    res.status(status).json({ error: 'Failed to create LinkedIn post', details });
   }
 });
 
-
-// ✅ Fetch all posts from MongoDB
+// DELETE LinkedIn post and DB entry
 router.delete('/:id', async (req, res) => {
-  const postIdToDelete = req.params.id;
+  const mongoId = req.params.id;
+  const token = process.env.LINKEDIN_ACCESS_TOKEN;
 
   try {
-    // 1. Find post in MongoDB
-    const post = await Post.findById(postIdToDelete);
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found in the database' });
-    }
+    const post = await Post.findById(mongoId);
+    if (!post) return res.status(404).json({ error: 'Post not found in database' });
 
-    const urn = post.postId;
-    const token = process.env.LINKEDIN_ACCESS_TOKEN;
+    const urn = post.activityUrn || post.postId;
 
-    // 2. Attempt LinkedIn post deletion (only if URN looks valid)
-    if (urn && urn.startsWith('urn:li:share:')) {
+    if (urn?.startsWith('urn:li:activity:')) {
       try {
-        console.log('🧩 Deleting LinkedIn post:', urn);
-
-        const response = await axios.delete(
+        const deleteRes = await axios.delete(
           `https://api.linkedin.com/rest/posts/${encodeURIComponent(urn)}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
               'LinkedIn-Version': '202306',
               'X-Restli-Protocol-Version': '2.0.0',
-              'X-RestLi-Method': 'DELETE',
             },
           }
         );
 
-        if (response.status === 204) {
-          console.log('✅ LinkedIn post deleted successfully.');
+        if (deleteRes.status === 204) {
+          console.log(`✅ LinkedIn post ${urn} deleted`);
         } else {
-          console.warn('⚠️ Unexpected LinkedIn status:', response.status);
+          console.warn(`⚠️ Unexpected status ${deleteRes.status} when deleting post`);
         }
-      } catch (linkedinErr) {
-        const status = linkedinErr.response?.status || 500;
-        const details = linkedinErr.response?.data || linkedinErr.message;
-
-        console.error('❌ LinkedIn delete error:', details);
-
-        return res.status(status).json({
-          error: 'Failed to delete from LinkedIn',
-          details,
+      } catch (err) {
+        console.error('❌ LinkedIn deletion failed:', err.response?.data || err.message);
+        return res.status(err.response?.status || 500).json({
+          error: 'LinkedIn deletion failed',
+          details: err.response?.data || err.message,
         });
       }
     } else {
-      console.warn('⚠️ No valid LinkedIn URN found, skipping LinkedIn deletion');
+      console.warn('⚠️ No valid activity URN, skipping LinkedIn deletion');
     }
 
-    // 3. Delete from MongoDB
-    await Post.findByIdAndDelete(postIdToDelete);
+    await post.deleteOne();
+    res.json({ message: '🗑️ Post deleted from DB and LinkedIn (if applicable)' });
 
-    res.json({ message: '🗑️ Post deleted from LinkedIn and database' });
   } catch (err) {
-    console.error('❌ Server error during deletion:', err.message);
-    res.status(500).json({
-      error: 'Server error during deletion',
-      details: err.message,
-    });
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
-
 
 module.exports = router;
